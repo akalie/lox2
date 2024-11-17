@@ -1,90 +1,56 @@
 package main
 
-import "fmt"
-
-type mword uint8
-
-type Value float64
-
-const (
-	OP_RETURN   = 1
-	OP_CONSTANT = 2
+import (
+	"bufio"
+	"fmt"
+	"lox2/inner"
+	"os"
 )
 
-type ValueArray struct {
-	values []*Value
-}
-
-func NewValueArray() *ValueArray {
-	return &ValueArray{
-		values: make([]*Value, 8),
-	}
-}
-
-func (va *ValueArray) write(v *Value) {
-	va.values = append(va.values, v)
-}
-
-type Chunk struct {
-	code      []uint8
-	constants *ValueArray
-}
-
-func (c *Chunk) write(b uint8) {
-	c.code = append(c.code, b)
-}
-
-func NewChunk() *Chunk {
-	return &Chunk{
-		code:      make([]uint8, 8),
-		constants: NewValueArray(),
-	}
-}
-
-func (c *Chunk) disassemble(name string) {
-	fmt.Printf("== %s ==\n", name)
-
-	for offset := 0; offset < len(c.code); {
-		offset = c.disassembleInstruction(offset)
-	}
-}
-
-func (c *Chunk) disassembleInstruction(offset int) int {
-	fmt.Printf("%04d  ", offset)
-
-	instruction := c.code[offset]
-	switch instruction {
-	case OP_RETURN:
-		return simpleInstruction("OP_RETURN", offset)
-	case OP_CONSTANT:
-		return constantInstruction("OP_CONSTANT", offset)
-	default:
-		println("Unknown opcode %d\n", instruction)
-		return offset + 1
-	}
-}
-
-func (c *Chunk) addConstant(v *Value) int {
-	c.constants.write(v)
-	return len(c.constants.values) - 1
-}
-
-func simpleInstruction(name string, offset int) int {
-	fmt.Printf("%s\n", name)
-	return offset + 1
-}
-
-func constantInstruction(name string) {
-
-}
-
 func main() {
-	chunk := NewChunk()
-	v := Value(1.2)
+	vm := inner.NewVm(inner.NewChunk())
 
-	cons := chunk.addConstant(&v)
-	chunk.write(OP_CONSTANT)
-	chunk.write(OP_RETURN)
-	chunk.disassemble("test chunk")
+	switch len(os.Args) {
+	case 1:
+		repl(vm)
+	case 2:
+		runFile(vm, os.Args[1])
+	default:
+		print("Usage: glox [path]\n")
+		os.Exit(64)
+	}
+}
+
+func repl(vm *inner.Vm) {
+	reader := bufio.NewReader(os.Stdin)
+
+	for {
+		fmt.Print("=> ")
+		line, err := reader.ReadString('\n')
+
+		if err != nil {
+			fmt.Println("Error while reading line: " + err.Error())
+		}
+
+		//line = strings.Trim(line, ";\n")
+		vm.Interpret(line)
+	}
+}
+
+func runFile(vm *inner.Vm, path string) {
+	source, err := os.ReadFile(path)
+	if err != nil {
+		println("No such file!")
+		os.Exit(1)
+	}
+
+	result := vm.Interpret(string(source))
+
+	if result == inner.INTERPRET_COMPILE_ERROR {
+		os.Exit(65)
+	}
+	if result == inner.INTERPRET_RUNTIME_ERROR {
+		os.Exit(70)
+	}
 
 }
