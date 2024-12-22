@@ -75,6 +75,10 @@ type Token struct {
 	Source []byte
 }
 
+func (t *Token) GetSource() []byte {
+	return t.Source
+}
+
 func NewScanner(source string) *Scanner {
 	charSource := []byte(source)
 

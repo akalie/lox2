@@ -3,19 +3,19 @@ package inner
 import "fmt"
 
 type Chunk struct {
-	code      []Mword
+	Code      []Mword
 	constants *ValueArray
 	lines     []int
 }
 
 func (c *Chunk) Write(b Mword, line int) {
-	c.code = append(c.code, b)
+	c.Code = append(c.Code, b)
 	c.lines = append(c.lines, line)
 }
 
 func NewChunk() *Chunk {
 	return &Chunk{
-		code:      []Mword{},
+		Code:      []Mword{},
 		constants: NewValueArray(),
 		lines:     []int{},
 	}
@@ -24,7 +24,7 @@ func NewChunk() *Chunk {
 func (c *Chunk) Disassemble(name string) {
 	fmt.Printf("== %s ==\n", name)
 
-	for offset := 0; offset < len(c.code); {
+	for offset := 0; offset < len(c.Code); {
 		offset = c.disassembleInstruction(offset)
 	}
 }
@@ -38,7 +38,7 @@ func (c *Chunk) disassembleInstruction(offset int) int {
 		fmt.Printf("l%d  ", c.lines[offset])
 	}
 
-	instruction := c.code[offset]
+	instruction := c.Code[offset]
 	switch instruction {
 	case OP_RETURN:
 		return simpleInstruction("OP_RETURN", offset)
@@ -74,7 +74,7 @@ func simpleInstruction(name string, offset int) int {
 }
 
 func constantInstruction(name string, chunk *Chunk, offset int) int {
-	constant := chunk.code[offset+1]
+	constant := chunk.Code[offset+1]
 	fmt.Printf("%-16s %4d '", name, constant)
 	printValue(chunk.constants.Values[constant])
 

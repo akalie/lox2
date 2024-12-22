@@ -5,23 +5,39 @@ import (
 	"fmt"
 	"lox2/inner"
 	"os"
+	"strings"
 )
 
 func main() {
-	vm := inner.NewVm(inner.NewChunk())
+	var newArgs []string
+	var debug = false
+	// pare
+	for _, arg := range os.Args[1:] {
+		argTrimmed := strings.ToLower(strings.TrimSpace(arg))
+		if argTrimmed == "-d" || argTrimmed == "--debug" {
+			debug = true
+		} else {
+			newArgs = append(newArgs, argTrimmed)
+		}
+	}
 
-	switch len(os.Args) {
+	vm := inner.NewVm(inner.NewChunk(), debug)
+
+	switch len(newArgs) {
+	case 0:
+		if debug {
+			fmt.Println("Debug is on")
+		}
+		repl(vm, debug)
 	case 1:
-		repl(vm)
-	case 2:
-		runFile(vm, os.Args[1])
+		runFile(vm, newArgs[0], debug)
 	default:
 		print("Usage: glox [path]\n")
 		os.Exit(64)
 	}
 }
 
-func repl(vm *inner.Vm) {
+func repl(vm *inner.Vm, debug bool) {
 	reader := bufio.NewReader(os.Stdin)
 
 	for {
@@ -37,7 +53,7 @@ func repl(vm *inner.Vm) {
 	}
 }
 
-func runFile(vm *inner.Vm, path string) {
+func runFile(vm *inner.Vm, path string, debug bool) {
 	source, err := os.ReadFile(path)
 	if err != nil {
 		println("No such file!")

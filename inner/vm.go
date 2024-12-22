@@ -1,6 +1,8 @@
 package inner
 
-import "fmt"
+import (
+	"fmt"
+)
 
 type InterpretResult uint8
 
@@ -16,26 +18,36 @@ type Vm struct {
 	Ip       uint
 	Stack    [STACK_MAX]Value
 	StackTop uint8
+	debug    bool
 }
 
-func NewVm(chunk *Chunk) *Vm {
+func NewVm(chunk *Chunk, debug bool) *Vm {
 	return &Vm{
 		Chunk:    chunk,
 		Ip:       0,
 		Stack:    [256]Value{},
 		StackTop: 0,
+		debug:    debug,
 	}
 }
 
 func (vm *Vm) Interpret(source string) InterpretResult {
-	Compile(source)
+	c := NewCompiler(vm.debug)
 
-	return INTERPRET_OK
+	if !c.Compile(source) {
+		return INTERPRET_RUNTIME_ERROR
+	}
+
+	vm.Chunk = c.chunk
+	vm.Ip = 0
+	result := vm.Run()
+
+	return result
 }
 
 func (vm *Vm) readByte() Mword {
-	defer func() { vm.Ip++ }()
-	return vm.Chunk.code[vm.Ip]
+	vm.Ip++
+	return vm.Chunk.Code[vm.Ip-1]
 }
 
 func (vm *Vm) readConstant() Value {
@@ -78,6 +90,9 @@ func (vm *Vm) ResetStack() {
 func (vm *Vm) Push(value Value) {
 	vm.Stack[vm.StackTop] = value
 	vm.StackTop++
+	if vm.debug {
+		vm.DebugStack()
+	}
 }
 
 func (vm *Vm) Pop() Value {
@@ -87,13 +102,16 @@ func (vm *Vm) Pop() Value {
 
 func (vm *Vm) DebugStack() {
 	println("          ")
+	fmt.Print("[ ")
+
 	for pointer := uint8(0); pointer < vm.StackTop; pointer++ {
-		println(pointer)
-		fmt.Print("[ ")
-		printValue(vm.Stack[pointer])
-		println(" ]")
+		l := fmt.Sprintf("%d: %v", pointer, vm.Stack[pointer])
+		if pointer+1 != vm.StackTop {
+			l = l + ", "
+		}
+		print(l)
 	}
-	println("")
+	println(" ]")
 }
 
 func wrapper(a float64, b float64, op opFunc) float64 {
