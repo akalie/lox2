@@ -44,31 +44,31 @@ func init() {
 		TOKEN_SEMICOLON:     {nil, nil, PREC_NONE},
 		TOKEN_SLASH:         {nil, binary, PREC_FACTOR},
 		TOKEN_STAR:          {nil, binary, PREC_FACTOR},
-		TOKEN_BANG:          {nil, nil, PREC_NONE},
-		TOKEN_BANG_EQUAL:    {nil, nil, PREC_NONE},
+		TOKEN_BANG:          {unary, nil, PREC_NONE},
+		TOKEN_BANG_EQUAL:    {nil, binary, PREC_EQUALITY},
 		TOKEN_EQUAL:         {nil, nil, PREC_NONE},
-		TOKEN_EQUAL_EQUAL:   {nil, nil, PREC_NONE},
-		TOKEN_GREATER:       {nil, nil, PREC_NONE},
-		TOKEN_GREATER_EQUAL: {nil, nil, PREC_NONE},
-		TOKEN_LESS:          {nil, nil, PREC_NONE},
-		TOKEN_LESS_EQUAL:    {nil, nil, PREC_NONE},
+		TOKEN_EQUAL_EQUAL:   {nil, binary, PREC_EQUALITY},
+		TOKEN_GREATER:       {nil, binary, PREC_COMPARISON},
+		TOKEN_GREATER_EQUAL: {nil, binary, PREC_COMPARISON},
+		TOKEN_LESS:          {nil, binary, PREC_COMPARISON},
+		TOKEN_LESS_EQUAL:    {nil, binary, PREC_COMPARISON},
 		TOKEN_IDENTIFIER:    {nil, nil, PREC_NONE},
-		TOKEN_STRING:        {nil, nil, PREC_NONE},
+		TOKEN_STRING:        {str, nil, PREC_NONE},
 		TOKEN_NUMBER:        {number, nil, PREC_NONE},
 		TOKEN_AND:           {nil, nil, PREC_NONE},
 		TOKEN_CLASS:         {nil, nil, PREC_NONE},
 		TOKEN_ELSE:          {nil, nil, PREC_NONE},
-		TOKEN_FALSE:         {nil, nil, PREC_NONE},
+		TOKEN_FALSE:         {literal, nil, PREC_NONE},
 		TOKEN_FOR:           {nil, nil, PREC_NONE},
 		TOKEN_FUN:           {nil, nil, PREC_NONE},
 		TOKEN_IF:            {nil, nil, PREC_NONE},
-		TOKEN_NIL:           {nil, nil, PREC_NONE},
+		TOKEN_NIL:           {literal, nil, PREC_NONE},
 		TOKEN_OR:            {nil, nil, PREC_NONE},
 		TOKEN_PRINT:         {nil, nil, PREC_NONE},
 		TOKEN_RETURN:        {nil, nil, PREC_NONE},
 		TOKEN_SUPER:         {nil, nil, PREC_NONE},
 		TOKEN_THIS:          {nil, nil, PREC_NONE},
-		TOKEN_TRUE:          {nil, nil, PREC_NONE},
+		TOKEN_TRUE:          {literal, nil, PREC_NONE},
 		TOKEN_VAR:           {nil, nil, PREC_NONE},
 		TOKEN_WHILE:         {nil, nil, PREC_NONE},
 		TOKEN_ERROR:         {nil, nil, PREC_NONE},
@@ -84,7 +84,9 @@ func unary(c *Compiler) {
 	// Emit the operator instruction.
 	switch operatorType {
 	case TOKEN_MINUS:
-		c.EmitByte(byte(OP_NEGATE))
+		c.EmitByte(OP_NEGATE)
+	case TOKEN_BANG:
+		c.EmitByte(OP_NOT)
 	default:
 		return
 	}
@@ -97,15 +99,40 @@ func binary(c *Compiler) {
 
 	switch operatorType {
 	case TOKEN_PLUS:
-		c.EmitByte(byte(OP_ADD))
+		c.EmitByte(OP_ADD)
 	case TOKEN_MINUS:
-		c.EmitByte(byte(OP_SUB))
+		c.EmitByte(OP_SUB)
 	case TOKEN_STAR:
-		c.EmitByte(byte(OP_MUL))
+		c.EmitByte(OP_MUL)
 	case TOKEN_SLASH:
-		c.EmitByte(byte(OP_DIV))
+		c.EmitByte(OP_DIV)
+	case TOKEN_BANG_EQUAL:
+		c.EmitBytes(OP_EQUAL, OP_NOT)
+	case TOKEN_EQUAL_EQUAL:
+		c.EmitByte(OP_EQUAL)
+	case TOKEN_GREATER:
+		c.EmitByte(OP_GREATER)
+	case TOKEN_GREATER_EQUAL:
+		c.EmitBytes(OP_LESS, OP_NOT)
+	case TOKEN_LESS:
+		c.EmitByte(OP_LESS)
+	case TOKEN_LESS_EQUAL:
+		c.EmitBytes(OP_GREATER, OP_NOT)
 	default:
 		return
+	}
+}
+
+func literal(c *Compiler) {
+	switch c.parser.previous.Type {
+	case TOKEN_FALSE:
+		c.EmitByte(OP_FALSE)
+	case TOKEN_NIL:
+		c.EmitByte(OP_NIL)
+	case TOKEN_TRUE:
+		c.EmitByte(OP_TRUE)
+	default:
+		return // Unreachable.
 	}
 }
 
@@ -115,7 +142,13 @@ func grouping(c *Compiler) {
 }
 func number(c *Compiler) {
 	t, _ := strconv.ParseFloat(string(c.parser.previous.GetSource()), 64)
-	c.emitConstant(Value(t))
+	c.emitConstant(numberVal(t))
+}
+func str(c *Compiler) {
+	s := make([]byte, len(c.parser.previous.Source)-2)
+	ddt := c.parser.previous.Source[c.parser.previous.Start+1 : len(c.parser.previous.Source)-1]
+	copy(s, ddt)
+	c.emitConstant(objVal(NewObjString(s)))
 }
 
 type Compiler struct {
@@ -165,12 +198,12 @@ func (c *Compiler) Advance() {
 }
 
 func (c *Compiler) EmitByte(byte2 byte) {
-	c.currentChunk().Write(Mword(byte2), 1)
+	c.currentChunk().Write(byte2, 1)
 }
 
 func (c *Compiler) EmitBytes(byte2 byte, byte3 byte) {
-	c.currentChunk().Write(Mword(byte2), 1)
-	c.currentChunk().Write(Mword(byte3), 1)
+	c.currentChunk().Write(byte2, 1)
+	c.currentChunk().Write(byte3, 1)
 }
 
 func (c *Compiler) currentChunk() *Chunk {
@@ -226,7 +259,7 @@ func (c *Compiler) endCompiler() {
 }
 
 func (c *Compiler) emitReturn() {
-	c.EmitByte(byte(OP_RETURN))
+	c.EmitByte(OP_RETURN)
 }
 
 func (c *Compiler) expression() {
@@ -251,7 +284,7 @@ func (c *Compiler) parsePrecedence(precedence Precedence) {
 }
 
 func (c *Compiler) emitConstant(value Value) {
-	c.EmitBytes(byte(OP_CONSTANT), c.makeConstant(value))
+	c.EmitBytes(OP_CONSTANT, c.makeConstant(value))
 }
 
 func (c *Compiler) makeConstant(value Value) byte {

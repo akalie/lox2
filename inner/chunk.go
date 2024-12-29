@@ -3,19 +3,19 @@ package inner
 import "fmt"
 
 type Chunk struct {
-	Code      []Mword
+	Code      []byte
 	constants *ValueArray
 	lines     []int
 }
 
-func (c *Chunk) Write(b Mword, line int) {
+func (c *Chunk) Write(b byte, line int) {
 	c.Code = append(c.Code, b)
 	c.lines = append(c.lines, line)
 }
 
 func NewChunk() *Chunk {
 	return &Chunk{
-		Code:      []Mword{},
+		Code:      []byte{},
 		constants: NewValueArray(),
 		lines:     []int{},
 	}
@@ -54,18 +54,30 @@ func (c *Chunk) disassembleInstruction(offset int) int {
 		return simpleInstruction("OP_MULTIPLY", offset)
 	case OP_DIV:
 		return simpleInstruction("OP_DIVIDE", offset)
+	case OP_TRUE:
+		return simpleInstruction("OP_TRUE", offset)
+	case OP_FALSE:
+		return simpleInstruction("OP_FALSE", offset)
+	case OP_NOT:
+		return simpleInstruction("OP_NOT", offset)
 	case OP_NIL:
-		return offset + 1
+		return simpleInstruction("OP_FALSE", offset)
+	case OP_EQUAL:
+		return simpleInstruction("OP_EQUAL", offset)
+	case OP_GREATER:
+		return simpleInstruction("OP_GREATER", offset)
+	case OP_LESS:
+		return simpleInstruction("OP_LESS", offset)
 	default:
 		fmt.Printf("Unknown opcode %d\n", instruction)
 		return offset + 1
 	}
 }
 
-func (c *Chunk) AddConstant(v Value) Mword {
+func (c *Chunk) AddConstant(v Value) byte {
 	c.constants.Write(v)
 
-	return Mword(len(c.constants.Values) - 1)
+	return byte(len(c.constants.Values) - 1)
 }
 
 func simpleInstruction(name string, offset int) int {
@@ -82,5 +94,33 @@ func constantInstruction(name string, chunk *Chunk, offset int) int {
 }
 
 func printValue(value Value) {
-	fmt.Printf("%v\n", value)
+	//fmt.Printf("%v\n", value.GetValue())
+	switch value.ttype {
+	case VAL_BOOL:
+		if value.GetValue() == 1 {
+			fmt.Print("true")
+		} else {
+			fmt.Print("false")
+		}
+	case VAL_NIL:
+		print("nil")
+	case VAL_NUMBER:
+		fmt.Printf("%g", value.GetValue())
+	case VAL_OBJ:
+		printObj(value)
+	}
+	println()
+}
+
+func printObj(value Value) {
+	switch value.GetObj().GetType() {
+	case OBJ_STRING:
+		switch t := value.GetObj().(type) {
+		case ObjString:
+			print(string(t.chars))
+		default:
+			panic("AAAAAAAA")
+		}
+		break
+	}
 }

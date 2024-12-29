@@ -2,6 +2,7 @@ package inner
 
 import (
 	"fmt"
+	"os"
 )
 
 type InterpretResult uint8
@@ -11,6 +12,9 @@ const (
 	INTERPRET_COMPILE_ERROR InterpretResult = iota
 	INTERPRET_RUNTIME_ERROR InterpretResult = iota
 )
+
+type ValueType uint8
+
 const STACK_MAX = 256
 
 type Vm struct {
@@ -45,7 +49,7 @@ func (vm *Vm) Interpret(source string) InterpretResult {
 	return result
 }
 
-func (vm *Vm) readByte() Mword {
+func (vm *Vm) readByte() byte {
 	vm.Ip++
 	return vm.Chunk.Code[vm.Ip-1]
 }
@@ -59,27 +63,76 @@ func (vm *Vm) Init() {
 }
 
 func (vm *Vm) Run() InterpretResult {
+	var result InterpretResult
 	for {
+		result = INTERPRET_OK
 		switch instruction := vm.readByte(); instruction {
 		case OP_RETURN:
 			printValue(vm.Pop())
 			return INTERPRET_OK
 		case OP_NEGATE:
-			vm.Stack[vm.StackTop-1] = -vm.Stack[vm.StackTop-1]
+			if !vm.Peek(0).isNumber() {
+				vm.runtimeError("Operand must be a number.")
+				return INTERPRET_RUNTIME_ERROR
+			}
+			vm.Push(numberVal(-vm.Pop().GetValue()))
 		case OP_CONSTANT:
 			constant := vm.readConstant()
 			vm.Push(constant)
 		case OP_ADD:
-			vm.Push(Value(wrapper(float64(vm.Pop()), float64(vm.Pop()), add)))
+			result = vm.binaryOp(numberVal, add)
 		case OP_SUB:
-			vm.Push(Value(wrapper(float64(vm.Pop()), float64(vm.Pop()), sub)))
+			result = vm.binaryOp(numberVal, sub)
 		case OP_MUL:
-			vm.Push(Value(wrapper(float64(vm.Pop()), float64(vm.Pop()), mul)))
+			result = vm.binaryOp(numberVal, mul)
 		case OP_DIV:
-			vm.Push(Value(wrapper(float64(vm.Pop()), float64(vm.Pop()), div)))
+			result = vm.binaryOp(numberVal, div)
+		case OP_NIL:
+			vm.Push(nilVal())
+		case OP_TRUE:
+			vm.Push(boolVal(true))
+		case OP_FALSE:
+			vm.Push(boolVal(false))
+		case OP_NOT:
+			vm.Push(boolVal(vm.isFalsy(vm.Pop())))
+		case OP_EQUAL:
+			b := vm.Pop()
+			a := vm.Pop()
+			vm.Push(boolVal(valuesEqual(a, b)))
+		case OP_GREATER:
+			result = vm.binaryOpBool(boolVal, greater)
+		case OP_LESS:
+			result = vm.binaryOpBool(boolVal, greater)
 		default:
 			return INTERPRET_COMPILE_ERROR
 		}
+
+		if result != INTERPRET_OK {
+			return result
+		}
+	}
+}
+
+func valuesEqual(a Value, b Value) bool {
+	if a.ttype != b.ttype {
+		return false
+	}
+
+	switch a.ttype {
+	case VAL_BOOL, VAL_NUMBER:
+		return a.GetValue() == b.GetValue()
+	case VAL_NIL:
+		return true
+	case VAL_OBJ:
+		switch a.GetObj().GetType() {
+		case OBJ_STRING:
+			// todo fixme
+			return fmt.Sprintf("%#v", a.GetObj()) == fmt.Sprintf("%#v", b.GetObj())
+		default:
+			return true
+		}
+	default:
+		return false // Unreachable.
 	}
 }
 
@@ -100,25 +153,87 @@ func (vm *Vm) Pop() Value {
 	return vm.Stack[vm.StackTop]
 }
 
+func (vm *Vm) Peek(distance uint8) Value {
+	return vm.Stack[vm.StackTop-distance-1]
+}
+
 func (vm *Vm) DebugStack() {
-	println("          ")
 	fmt.Print("[ ")
 
 	for pointer := uint8(0); pointer < vm.StackTop; pointer++ {
-		l := fmt.Sprintf("%d: %v", pointer, vm.Stack[pointer])
+		val := vm.Stack[pointer]
+
+		ttypeName := ValTypeMap[val.ttype]
+		var value any
+		if val.ttype == VAL_NIL {
+			value = "nil"
+		} else if val.ttype == VAL_OBJ {
+			t := val.GetObj()
+			ttypeName = ttypeName + " " + t.GetTypeName()
+			switch k := t.(type) {
+			case ObjString:
+				value = string(k.chars)
+			default:
+				panic("AAAA")
+			}
+			//value = val.GetObj().getTypeName()
+		} else {
+			value = val.GetValue()
+		}
+		l := fmt.Sprintf("%d: (%s) %#v", pointer, ttypeName, value)
 		if pointer+1 != vm.StackTop {
 			l = l + ", "
 		}
 		print(l)
 	}
+
 	println(" ]")
 }
 
-func wrapper(a float64, b float64, op opFunc) float64 {
-	return op(a, b)
+func (vm *Vm) binaryOp(valueType func(v float64) Value, op opFunc) InterpretResult {
+	if !vm.Peek(0).isNumber() || !vm.Peek(1).isNumber() {
+		vm.runtimeError("Operands must be numbers.")
+		return INTERPRET_RUNTIME_ERROR
+	}
+	vm.Push(valueType(op(vm.Pop().GetValue(), vm.Pop().GetValue())))
+
+	return INTERPRET_OK
+}
+func (vm *Vm) binaryOpBool(valueTypeBool func(v bool) Value, opBool opFuncBool) InterpretResult {
+	if !vm.Peek(0).isNumber() || !vm.Peek(1).isNumber() {
+		vm.runtimeError("Operands must be numbers.")
+		return INTERPRET_RUNTIME_ERROR
+	}
+	vm.Push(valueTypeBool(opBool(vm.Pop().GetValue(), vm.Pop().GetValue())))
+
+	return INTERPRET_OK
+}
+
+func (vm *Vm) isFalsy(val Value) bool {
+	switch val.ttype {
+	case VAL_NIL:
+		return true
+	case VAL_BOOL:
+		return val.GetValue() == 0
+	case VAL_NUMBER:
+		return val.GetValue() == 0
+	default:
+		return false
+	}
+}
+
+func (vm *Vm) runtimeError(format string, vals ...any) {
+	fmt.Fprintln(os.Stderr, fmt.Sprintf(format, vals...))
+	//
+	// instruction = vm.Ip - vm.Chunk.Code[0] - 1;
+	instruction := vm.Ip - 1
+	line := vm.Chunk.lines[instruction]
+	fmt.Fprintln(os.Stderr, fmt.Sprintf("[line %d] in script\n", line))
+	vm.ResetStack()
 }
 
 type opFunc func(b, a float64) float64
+type opFuncBool func(b, a float64) bool
 
 func add(b, a float64) float64 {
 	return a + b
@@ -134,4 +249,11 @@ func mul(b, a float64) float64 {
 
 func div(b, a float64) float64 {
 	return a / b
+}
+
+func greater(b, a float64) bool {
+	return a > b
+}
+func less(b, a float64) bool {
+	return a < b
 }
