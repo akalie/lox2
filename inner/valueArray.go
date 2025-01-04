@@ -82,6 +82,18 @@ func (v Value) GetObj() Obj {
 	}
 }
 
+func toStringObj(value Value) ObjString {
+	if !value.isObjType(OBJ_STRING) {
+		panic("We should never be here, toString")
+	}
+	switch t := value.GetObj().(type) {
+	case ObjString:
+		return t
+	default:
+		panic("We should never be here, toString, not objString")
+	}
+}
+
 func (v Value) isBool() bool {
 	return v.ttype == VAL_BOOL
 }

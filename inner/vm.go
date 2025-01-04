@@ -191,11 +191,14 @@ func (vm *Vm) DebugStack() {
 }
 
 func (vm *Vm) binaryOp(valueType func(v float64) Value, op opFunc) InterpretResult {
-	if !vm.Peek(0).isNumber() || !vm.Peek(1).isNumber() {
+	if vm.Peek(0).isObjType(OBJ_STRING) && vm.Peek(1).isObjType(OBJ_STRING) {
+		vm.Concatenate()
+	} else if vm.Peek(0).isNumber() || vm.Peek(1).isNumber() {
+		vm.Push(valueType(op(vm.Pop().GetValue(), vm.Pop().GetValue())))
+	} else {
 		vm.runtimeError("Operands must be numbers.")
 		return INTERPRET_RUNTIME_ERROR
 	}
-	vm.Push(valueType(op(vm.Pop().GetValue(), vm.Pop().GetValue())))
 
 	return INTERPRET_OK
 }
@@ -230,6 +233,24 @@ func (vm *Vm) runtimeError(format string, vals ...any) {
 	line := vm.Chunk.lines[instruction]
 	fmt.Fprintln(os.Stderr, fmt.Sprintf("[line %d] in script\n", line))
 	vm.ResetStack()
+}
+
+func (vm *Vm) Concatenate() {
+	b := toStringObj(vm.Pop())
+	a := toStringObj(vm.Pop())
+	length := a.length + b.length
+	t := make([]byte, length)
+	s := make([]byte, length)
+	s = append(a.chars, b.chars...)
+	copy(t, s)
+
+	newStringVal := objVal(ObjString{
+		ttype:  OBJ_STRING,
+		length: length,
+		chars:  t,
+	})
+
+	vm.Push(newStringVal)
 }
 
 type opFunc func(b, a float64) float64
