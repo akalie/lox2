@@ -148,7 +148,13 @@ func str(c *Compiler) {
 	s := make([]byte, len(c.parser.previous.Source)-2)
 	ddt := c.parser.previous.Source[c.parser.previous.Start+1 : len(c.parser.previous.Source)-1]
 	copy(s, ddt)
-	c.emitConstant(objVal(NewObjString(s)))
+	sVal := NewObjString(s)
+	wrap := objVal(sVal, c.vm.objects)
+	switch t := wrap.v.(type) {
+	case *ObjValue:
+		c.vm.objects = t
+	}
+	c.emitConstant(wrap)
 }
 
 type Compiler struct {
@@ -156,6 +162,7 @@ type Compiler struct {
 	chunk   *Chunk
 	scanner *Scanner
 	debug   bool
+	vm      *Vm
 }
 
 type Parser struct {
@@ -165,11 +172,12 @@ type Parser struct {
 	panicMode bool
 }
 
-func NewCompiler(debug bool) *Compiler {
+func NewCompiler(debug bool, vm *Vm) *Compiler {
 	return &Compiler{
 		parser: &Parser{},
 		chunk:  NewChunk(),
 		debug:  debug,
+		vm:     vm,
 	}
 }
 
@@ -232,7 +240,7 @@ func (c *Compiler) ErrorAt(token Token, message string) {
 	} else if token.Type == TOKEN_ERROR {
 		// Nothing.
 	} else {
-		fmt.Printf(" at '%.*s'", len(token.Source), token.Start)
+		fmt.Printf(" at '%.*d'", len(token.Source), token.Start)
 	}
 
 	fmt.Printf(": %s\n", message)

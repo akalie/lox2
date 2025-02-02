@@ -9,6 +9,7 @@ import (
 )
 
 func main() {
+
 	var newArgs []string
 	var debug = true
 	var lineRun = false

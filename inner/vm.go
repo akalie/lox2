@@ -1,6 +1,7 @@
 package inner
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 )
@@ -23,6 +24,7 @@ type Vm struct {
 	Stack    [STACK_MAX]Value
 	StackTop uint8
 	debug    bool
+	objects  *ObjValue
 }
 
 func NewVm(chunk *Chunk, debug bool) *Vm {
@@ -36,7 +38,7 @@ func NewVm(chunk *Chunk, debug bool) *Vm {
 }
 
 func (vm *Vm) Interpret(source string) InterpretResult {
-	c := NewCompiler(vm.debug)
+	c := NewCompiler(vm.debug, vm)
 
 	if !c.Compile(source) {
 		return INTERPRET_RUNTIME_ERROR
@@ -45,6 +47,23 @@ func (vm *Vm) Interpret(source string) InterpretResult {
 	vm.Chunk = c.chunk
 	vm.Ip = 0
 	result := vm.Run()
+
+	if vm.debug {
+		count := 0
+		if vm.objects != nil {
+			next := vm.objects
+			//println(fmt.Sprintf("%#v", next))
+			count = 1
+			for next.next != nil {
+				next = next.next
+				//println(fmt.Sprintf("%#v", next))
+				count++
+			}
+		}
+		fmt.Println(fmt.Sprintf("Number of objects: %d", count))
+	}
+
+	vm.free()
 
 	return result
 }
@@ -60,6 +79,11 @@ func (vm *Vm) readConstant() Value {
 
 func (vm *Vm) Init() {
 	vm.ResetStack()
+	vm.objects = nil
+}
+
+func (vm *Vm) free() {
+	freeObjects(vm)
 }
 
 func (vm *Vm) Run() InterpretResult {
@@ -126,8 +150,13 @@ func valuesEqual(a Value, b Value) bool {
 	case VAL_OBJ:
 		switch a.GetObj().GetType() {
 		case OBJ_STRING:
-			// todo fixme
-			return fmt.Sprintf("%#v", a.GetObj()) == fmt.Sprintf("%#v", b.GetObj())
+			aOb := a.GetObj().(ObjString)
+			bOb := b.GetObj().(ObjString)
+			if aOb.length != bOb.length {
+				return false
+			}
+
+			return bytes.Equal(aOb.chars, bOb.chars)
 		default:
 			return true
 		}
@@ -248,7 +277,12 @@ func (vm *Vm) Concatenate() {
 		ttype:  OBJ_STRING,
 		length: length,
 		chars:  t,
-	})
+	}, vm.objects)
+
+	switch t := newStringVal.v.(type) {
+	case *ObjValue:
+		vm.objects = t
+	}
 
 	vm.Push(newStringVal)
 }

@@ -19,6 +19,7 @@ type ObjString struct {
 	ttype  ObjType
 	length int
 	chars  []byte
+	hash   uint32
 }
 
 func (o ObjString) GetTypeName() string {
@@ -34,5 +35,16 @@ func NewObjString(chars []byte) ObjString {
 		ttype:  OBJ_STRING,
 		chars:  chars,
 		length: len(chars),
+		hash:   hashString(chars, len(chars)),
 	}
+}
+
+func hashString(key []byte, length int) uint32 {
+	hash := 2166136261
+
+	for i := 0; i < length; i++ {
+		hash ^= int(key[i])
+		hash *= 16777619
+	}
+	return uint32(hash)
 }

@@ -46,7 +46,8 @@ func (bv BoolValue) GetObj() Obj {
 }
 
 type ObjValue struct {
-	v Obj
+	v    Obj
+	next *ObjValue
 }
 
 func (ov ObjValue) GetObj() Obj {
@@ -118,12 +119,12 @@ func numberVal(v float64) Value {
 func nilVal() Value {
 	return Value{ttype: VAL_NIL, v: nil}
 }
-func objVal(v any) Value {
+func objVal(v any, next *ObjValue) Value {
 	switch t := v.(type) {
 	case Obj:
-		return Value{ttype: VAL_OBJ, v: &ObjValue{v: t}}
+		return Value{ttype: VAL_OBJ, v: &ObjValue{v: t, next: next}}
 	case ObjString:
-		return Value{ttype: VAL_OBJ, v: &ObjValue{v: ObjString{ttype: OBJ_STRING}}}
+		return Value{ttype: VAL_OBJ, v: &ObjValue{v: ObjString{ttype: OBJ_STRING}, next: next}}
 	default:
 		panic(fmt.Sprintf("We should never be here: %#v", t))
 	}
