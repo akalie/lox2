@@ -1,6 +1,7 @@
 package inner
 
 import (
+	"bytes"
 	"fmt"
 	"strconv"
 )
@@ -21,7 +22,7 @@ const (
 	PREC_PRIMARY    Precedence = iota
 )
 
-type ParseFn func(c *Compiler)
+type ParseFn func(c *Compiler, canAssign bool)
 
 type ParseRule struct {
 	prefix     ParseFn
@@ -52,7 +53,7 @@ func init() {
 		TOKEN_GREATER_EQUAL: {nil, binary, PREC_COMPARISON},
 		TOKEN_LESS:          {nil, binary, PREC_COMPARISON},
 		TOKEN_LESS_EQUAL:    {nil, binary, PREC_COMPARISON},
-		TOKEN_IDENTIFIER:    {nil, nil, PREC_NONE},
+		TOKEN_IDENTIFIER:    {variable, nil, PREC_NONE},
 		TOKEN_STRING:        {str, nil, PREC_NONE},
 		TOKEN_NUMBER:        {number, nil, PREC_NONE},
 		TOKEN_AND:           {nil, nil, PREC_NONE},
@@ -76,7 +77,7 @@ func init() {
 	}
 }
 
-func unary(c *Compiler) {
+func unary(c *Compiler, canAssign bool) {
 	operatorType := c.parser.previous.Type
 	// Compile the operand.
 	c.parsePrecedence(PREC_UNARY)
@@ -92,7 +93,7 @@ func unary(c *Compiler) {
 	}
 }
 
-func binary(c *Compiler) {
+func binary(c *Compiler, canAssign bool) {
 	operatorType := c.parser.previous.Type
 	rule := c.getRule(operatorType)
 	c.parsePrecedence(Precedence(int(rule.precedence) + 1))
@@ -123,7 +124,7 @@ func binary(c *Compiler) {
 	}
 }
 
-func literal(c *Compiler) {
+func literal(c *Compiler, canAssign bool) {
 	switch c.parser.previous.Type {
 	case TOKEN_FALSE:
 		c.EmitByte(OP_FALSE)
@@ -136,15 +137,16 @@ func literal(c *Compiler) {
 	}
 }
 
-func grouping(c *Compiler) {
+func grouping(c *Compiler, canAssign bool) {
 	c.expression()
 	c.consume(TOKEN_RIGHT_PAREN, "Expect ')' after expression.")
 }
-func number(c *Compiler) {
+func number(c *Compiler, canAssign bool) {
 	t, _ := strconv.ParseFloat(string(c.parser.previous.GetSource()), 64)
 	c.emitConstant(numberVal(t))
 }
-func str(c *Compiler) {
+
+func str(c *Compiler, canAssign bool) {
 	s := make([]byte, len(c.parser.previous.Source)-2)
 	ddt := c.parser.previous.Source[c.parser.previous.Start+1 : len(c.parser.previous.Source)-1]
 	copy(s, ddt)
@@ -157,12 +159,30 @@ func str(c *Compiler) {
 	c.emitConstant(wrap)
 }
 
+func variable(c *Compiler, canAssign bool) {
+	c.namedVariable(c.parser.previous, canAssign)
+}
+
+type Local struct {
+	name  Token
+	depth int
+}
+
+func NewLocal() *Local {
+	return &Local{
+		depth: -1,
+	}
+}
+
 type Compiler struct {
-	parser  *Parser
-	chunk   *Chunk
-	scanner *Scanner
-	debug   bool
-	vm      *Vm
+	parser     *Parser
+	chunk      *Chunk
+	scanner    *Scanner
+	debug      bool
+	vm         *Vm
+	locals     [256]*Local
+	localCount int
+	scopeDepth int
 }
 
 type Parser struct {
@@ -173,23 +193,52 @@ type Parser struct {
 }
 
 func NewCompiler(debug bool, vm *Vm) *Compiler {
+	locals := [256]*Local{}
+	for i := 0; i < len(locals); i++ {
+		locals[i] = NewLocal()
+	}
 	return &Compiler{
 		parser: &Parser{},
 		chunk:  NewChunk(),
 		debug:  debug,
 		vm:     vm,
+		locals: locals,
 	}
 }
 
 func (c *Compiler) Compile(source string) bool {
 	c.scanner = NewScanner(source)
 	c.Advance()
-	c.expression()
-	c.consume(TOKEN_EOF, "Expect end of expression.")
 
+	for !c.Match(TOKEN_EOF) {
+		c.declaration()
+	}
 	c.endCompiler()
 
 	return !c.parser.hadError
+}
+
+func (c *Compiler) declaration() {
+	if c.Match(TOKEN_VAR) {
+		c.VarDeclaration()
+	} else {
+		c.Statement()
+	}
+	if c.parser.panicMode {
+		c.synchronize()
+	}
+}
+
+func (c *Compiler) Statement() {
+	if c.Match(TOKEN_PRINT) {
+		c.PrintStatement()
+	} else if c.Match(TOKEN_LEFT_BRACE) {
+		c.BeginScope()
+		c.Block()
+		c.EndScope()
+	} else {
+		c.ExpressionStatement()
+	}
 }
 
 func (c *Compiler) Advance() {
@@ -240,12 +289,12 @@ func (c *Compiler) ErrorAt(token Token, message string) {
 	} else if token.Type == TOKEN_ERROR {
 		// Nothing.
 	} else {
-		fmt.Printf(" at '%.*d'", len(token.Source), token.Start)
+		fmt.Printf(" at '%s'", token.Source)
+		fmt.Printf(" at line %d symbol %d", token.Line, token.Start)
 	}
 
 	fmt.Printf(": %s\n", message)
 	c.parser.hadError = true
-
 }
 
 func (c *Compiler) consume(ttype TokenType, message string) {
@@ -277,17 +326,23 @@ func (c *Compiler) expression() {
 func (c *Compiler) parsePrecedence(precedence Precedence) {
 	c.Advance()
 	prefixRule := c.getRule(c.parser.previous.Type).prefix
+
 	if prefixRule == nil {
 		c.Error("Expect expression.")
 		return
 	}
 
-	prefixRule(c)
+	canAssign := precedence <= PREC_ASSIGNMENT
+	prefixRule(c, canAssign)
 
 	for precedence <= c.getRule(c.parser.current.Type).precedence {
 		c.Advance()
 		infixRule := c.getRule(c.parser.previous.Type).infix
-		infixRule(c)
+		infixRule(c, canAssign)
+	}
+
+	if canAssign && c.Match(TOKEN_EQUAL) {
+		c.Error("Invalid assignment target.")
 	}
 }
 
@@ -307,4 +362,183 @@ func (c *Compiler) makeConstant(value Value) byte {
 
 func (c *Compiler) getRule(operatorType TokenType) ParseRule {
 	return rules[operatorType]
+}
+
+func (c *Compiler) Match(ttype TokenType) bool {
+	if !c.Check(ttype) {
+		return false
+	}
+	c.Advance()
+	return true
+}
+
+func (c *Compiler) Check(ttype TokenType) bool {
+	return c.parser.current.Type == ttype
+}
+
+func (c *Compiler) PrintStatement() {
+	c.expression()
+	c.consume(TOKEN_SEMICOLON, "Expect '' after value.")
+	c.EmitByte(OP_PRINT)
+}
+
+func (c *Compiler) ExpressionStatement() {
+	c.expression()
+	c.consume(TOKEN_SEMICOLON, "Expect '' after expression.")
+	c.EmitByte(OP_POP)
+}
+
+func (c *Compiler) synchronize() {
+	c.parser.panicMode = false
+
+	for c.parser.current.Type != TOKEN_EOF {
+		if c.parser.previous.Type == TOKEN_SEMICOLON {
+			return
+		}
+		switch c.parser.current.Type {
+		case TOKEN_CLASS, TOKEN_FUN, TOKEN_VAR, TOKEN_FOR, TOKEN_IF, TOKEN_WHILE, TOKEN_PRINT, TOKEN_RETURN:
+			return
+		default:
+			// Do nothing.
+		}
+
+		c.Advance()
+	}
+}
+
+func (c *Compiler) VarDeclaration() {
+	global := c.parseVariable("Expect variable name.")
+
+	if c.Match(TOKEN_EQUAL) {
+		c.expression()
+	} else {
+		c.EmitByte(OP_NIL)
+	}
+	c.consume(TOKEN_SEMICOLON, "Expect '' after variable declaration.")
+
+	c.DefineVariable(global)
+}
+
+func (c *Compiler) DefineVariable(global byte) {
+	if c.scopeDepth > 0 {
+		c.markInitialized()
+		return
+	}
+
+	c.EmitBytes(OP_DEFINE_GLOBAL, global)
+}
+
+func (c *Compiler) parseVariable(errorMessage string) byte {
+	c.consume(TOKEN_IDENTIFIER, errorMessage)
+
+	c.declareVariable()
+	if c.scopeDepth > 0 {
+		return 0
+	}
+
+	return c.identifierConstant(c.parser.previous)
+}
+
+func (c *Compiler) identifierConstant(name Token) byte {
+	return c.makeConstant(objVal(NewObjString(name.Source), c.vm.objects))
+}
+
+func (c *Compiler) namedVariable(name Token, canAssign bool) {
+	argt := c.resolveLocal(name)
+	var getOp, setOp, arg byte
+	if argt != -1 {
+		arg = uint8(argt)
+		getOp = OP_GET_LOCAL
+		setOp = OP_SET_LOCAL
+	} else {
+		arg = c.identifierConstant(name)
+		getOp = OP_GET_GLOBAL
+		setOp = OP_SET_GLOBAL
+	}
+
+	if canAssign && c.Match(TOKEN_EQUAL) {
+		c.expression()
+		c.EmitBytes(setOp, arg)
+	} else {
+		c.EmitBytes(getOp, arg)
+	}
+}
+
+func (c *Compiler) Block() {
+	for !c.Check(TOKEN_RIGHT_BRACE) && !c.Check(TOKEN_EOF) {
+		c.declaration()
+	}
+
+	c.consume(TOKEN_RIGHT_BRACE, "Expect '}' after block.")
+}
+
+func (c *Compiler) BeginScope() {
+	c.scopeDepth++
+}
+
+func (c *Compiler) EndScope() {
+	c.scopeDepth--
+	for c.localCount > 0 && c.locals[c.localCount-1].depth > c.scopeDepth {
+		c.EmitByte(OP_POP)
+		c.localCount--
+	}
+}
+
+func (c *Compiler) declareVariable() {
+	if c.scopeDepth == 0 {
+		return
+	}
+
+	name := c.parser.previous
+
+	for i := c.localCount - 1; i >= 0; i-- {
+		local := c.locals[i]
+		if local.depth != -1 && local.depth < c.scopeDepth {
+			break
+		}
+
+		if c.identifiersEqual(name, local.name) {
+			c.errorAtCurrent("Already a variable with this name in this scope.")
+		}
+	}
+
+	c.addLocal(name)
+}
+
+func (c *Compiler) addLocal(name Token) {
+	if c.localCount == STACK_MAX {
+		c.errorAtCurrent("Too many local variables in function.")
+
+		return
+	}
+
+	local := c.locals[c.localCount]
+	c.localCount++
+	local.name = name
+	local.depth = c.scopeDepth
+}
+
+func (c *Compiler) identifiersEqual(a Token, b Token) bool {
+	if len(a.Source) != len(b.Source) {
+		return false
+	}
+	return bytes.Equal(a.Source, b.Source)
+}
+
+func (c *Compiler) resolveLocal(name Token) int {
+	for i := c.localCount - 1; i >= 0; i-- {
+		local := c.locals[i]
+		if c.identifiersEqual(name, local.name) {
+			if local.depth == -1 {
+				c.errorAtCurrent("Can't read local variable in its own initializer.")
+			}
+			return i
+		}
+	}
+
+	return -1
+}
+
+func (c *Compiler) markInitialized() {
+	c.locals[c.localCount-1].depth = c.scopeDepth
 }

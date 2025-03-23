@@ -9,9 +9,9 @@ import (
 )
 
 func main() {
-
 	var newArgs []string
 	var debug = true
+	//var debug = false
 	var lineRun = false
 
 	for _, arg := range os.Args[1:] {
@@ -26,7 +26,7 @@ func main() {
 	}
 
 	vm := inner.NewVm(inner.NewChunk(), debug)
-
+	//newArgs = append(newArgs, "/home/akalie/fun/go/lox2/local_global.lx")
 	switch len(newArgs) {
 	case 0:
 		if debug {
@@ -51,7 +51,9 @@ func repl(vm *inner.Vm) {
 	for {
 		fmt.Print("=> ")
 		line, err := reader.ReadString('\n')
-
+		if !strings.ContainsAny(line, ";") {
+			line = line + ";"
+		}
 		if err != nil {
 			fmt.Println("Error while reading line: " + err.Error())
 		}

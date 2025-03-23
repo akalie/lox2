@@ -25,6 +25,7 @@ type Vm struct {
 	StackTop uint8
 	debug    bool
 	objects  *ObjValue
+	globals  *Table
 }
 
 func NewVm(chunk *Chunk, debug bool) *Vm {
@@ -34,6 +35,7 @@ func NewVm(chunk *Chunk, debug bool) *Vm {
 		Stack:    [256]Value{},
 		StackTop: 0,
 		debug:    debug,
+		globals:  NewTable(),
 	}
 }
 
@@ -77,6 +79,16 @@ func (vm *Vm) readConstant() Value {
 	return vm.Chunk.constants.Values[vm.readByte()]
 }
 
+func (vm *Vm) readString() ObjString {
+	t := vm.readConstant().GetObj()
+	switch k := t.(type) {
+	case ObjString:
+		return k
+	default:
+		panic("We should never be here")
+	}
+}
+
 func (vm *Vm) Init() {
 	vm.ResetStack()
 	vm.objects = nil
@@ -91,9 +103,6 @@ func (vm *Vm) Run() InterpretResult {
 	for {
 		result = INTERPRET_OK
 		switch instruction := vm.readByte(); instruction {
-		case OP_RETURN:
-			printValue(vm.Pop())
-			return INTERPRET_OK
 		case OP_NEGATE:
 			if !vm.Peek(0).isNumber() {
 				vm.runtimeError("Operand must be a number.")
@@ -117,6 +126,14 @@ func (vm *Vm) Run() InterpretResult {
 			vm.Push(boolVal(true))
 		case OP_FALSE:
 			vm.Push(boolVal(false))
+		case OP_POP:
+			vm.Pop()
+		case OP_GET_LOCAL:
+			slot := vm.readByte()
+			vm.Push(vm.Stack[slot])
+		case OP_SET_LOCAL:
+			slot := vm.readByte()
+			vm.Stack[slot] = vm.Peek(0)
 		case OP_NOT:
 			vm.Push(boolVal(vm.isFalsy(vm.Pop())))
 		case OP_EQUAL:
@@ -127,6 +144,32 @@ func (vm *Vm) Run() InterpretResult {
 			result = vm.binaryOpBool(boolVal, greater)
 		case OP_LESS:
 			result = vm.binaryOpBool(boolVal, greater)
+		case OP_PRINT:
+			t := vm.Pop()
+			if t.isNumber() {
+				fmt.Printf("#> %v\n", t.GetValue())
+			} else {
+				fmt.Printf("#> %s\n", toStringObj(t).chars)
+			}
+		case OP_DEFINE_GLOBAL:
+			name := vm.readString()
+			vm.globals.Set(&name, vm.Peek(0))
+			vm.Pop()
+		case OP_GET_GLOBAL:
+			name := vm.readString()
+			val, ok := vm.globals.Get(&name)
+			if !ok {
+				vm.runtimeError("Undefined variable '%s'.", name.chars)
+				return INTERPRET_RUNTIME_ERROR
+			}
+			vm.Push(val)
+		case OP_SET_GLOBAL:
+			name := vm.readString()
+			if vm.globals.Set(&name, vm.Peek(0)) {
+				vm.globals.Delete(&name)
+				vm.runtimeError("Undefined variable '%s'.", name.chars)
+				return INTERPRET_RUNTIME_ERROR
+			}
 		default:
 			return INTERPRET_COMPILE_ERROR
 		}

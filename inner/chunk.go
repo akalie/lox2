@@ -68,6 +68,20 @@ func (c *Chunk) disassembleInstruction(offset int) int {
 		return simpleInstruction("OP_GREATER", offset)
 	case OP_LESS:
 		return simpleInstruction("OP_LESS", offset)
+	case OP_PRINT:
+		return simpleInstruction("OP_PRINT", offset)
+	case OP_POP:
+		return simpleInstruction("OP_POP", offset)
+	case OP_DEFINE_GLOBAL:
+		return constantInstruction("OP_DEFINE_GLOBAL", c, offset)
+	case OP_GET_GLOBAL:
+		return constantInstruction("OP_GET_GLOBAL", c, offset)
+	case OP_SET_GLOBAL:
+		return constantInstruction("OP_SET_GLOBAL", c, offset)
+	case OP_GET_LOCAL:
+		return byteInstruction("OP_GET_LOCAL", c, offset)
+	case OP_SET_LOCAL:
+		return byteInstruction("OP_SET_LOCAL", c, offset)
 	default:
 		fmt.Printf("Unknown opcode %d\n", instruction)
 		return offset + 1
@@ -83,6 +97,12 @@ func (c *Chunk) AddConstant(v Value) byte {
 func simpleInstruction(name string, offset int) int {
 	fmt.Printf("%s\n", name)
 	return offset + 1
+}
+
+func byteInstruction(name string, chunk *Chunk, offset int) int {
+	slot := chunk.Code[offset+1]
+	fmt.Printf("%-16s %4d\n", name, slot)
+	return offset + 2
 }
 
 func constantInstruction(name string, chunk *Chunk, offset int) int {

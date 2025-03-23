@@ -20,6 +20,7 @@ type iValue interface {
 	GetValue() float64
 	GetObj() Obj
 }
+
 type FloatValue struct {
 	v float64
 }
@@ -27,6 +28,7 @@ type FloatValue struct {
 func (fv FloatValue) GetValue() float64 {
 	return fv.v
 }
+
 func (fv FloatValue) GetObj() Obj {
 	panic("We should never be here")
 }
@@ -41,6 +43,7 @@ func (bv BoolValue) GetValue() float64 {
 	}
 	return 0
 }
+
 func (bv BoolValue) GetObj() Obj {
 	panic("We should never be here")
 }
@@ -98,27 +101,35 @@ func toStringObj(value Value) ObjString {
 func (v Value) isBool() bool {
 	return v.ttype == VAL_BOOL
 }
+
 func (v Value) isNil() bool {
 	return v.ttype == VAL_NIL
 }
+
 func (v Value) isNumber() bool {
 	return v.ttype == VAL_NUMBER
 }
+
 func (v Value) isObj() bool {
 	return v.ttype == VAL_OBJ
 }
+
 func (v Value) isObjType(ttype ObjType) bool {
 	return v.ttype == VAL_OBJ && v.v.GetObj().GetType() == ttype
 }
+
 func boolVal(v bool) Value {
 	return Value{ttype: VAL_BOOL, v: BoolValue{v: v}}
 }
+
 func numberVal(v float64) Value {
 	return Value{ttype: VAL_NUMBER, v: FloatValue{v: v}}
 }
+
 func nilVal() Value {
 	return Value{ttype: VAL_NIL, v: nil}
 }
+
 func objVal(v any, next *ObjValue) Value {
 	switch t := v.(type) {
 	case Obj:
@@ -126,10 +137,8 @@ func objVal(v any, next *ObjValue) Value {
 	case ObjString:
 		return Value{ttype: VAL_OBJ, v: &ObjValue{v: ObjString{ttype: OBJ_STRING}, next: next}}
 	default:
-		panic(fmt.Sprintf("We should never be here: %#v", t))
+		panic(fmt.Sprintf("We should never be here(objVal): %#v", t))
 	}
-
-	panic("We should never be here")
 }
 
 type ValueArray struct {

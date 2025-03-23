@@ -1,0 +1,17 @@
+// some tests for local/global variables in lox language
+
+// global variable
+var a = 1;
+var b = 2;
+
+// local variable
+{
+  var a = 3;
+  var b = 4;
+  print a;
+  print b;
+}
+
+print a;
+print b;
+
