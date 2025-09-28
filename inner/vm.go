@@ -60,7 +60,9 @@ func NewVm(chunk *Chunk, debug bool) *Vm {
 		FrameCount: 0,
 	}
 
-	vm.DefineNative("clock", clockNative)
+	vm.DefineNative("clock", clockNative, 0)
+	vm.DefineNative("add", addNative, 3)
+	vm.DefineNative("addVariadic", addNative, -1)
 
 	return vm
 }
@@ -202,9 +204,10 @@ func (vm *Vm) Run() InterpretResult {
 			vm.Pop()
 		case OP_GET_GLOBAL:
 			name := vm.readString()
+
 			val, ok := vm.globals.Get(&name)
 			if !ok {
-				vm.runtimeError("Undefined variable '%s'.", name.chars)
+				vm.runtimeError("Undefined variable1 '%s'.", name.chars)
 				return INTERPRET_RUNTIME_ERROR
 			}
 			vm.Push(val)
@@ -228,7 +231,7 @@ func (vm *Vm) Run() InterpretResult {
 			frame.ip -= offset
 		case OP_CALL:
 			argCount := vm.readByte()
-			fmt.Printf("Arg call count %d \n", argCount)
+			//fmt.Printf("Arg call count %d \n", argCount)
 			if !vm.CallValue(vm.Peek(argCount), argCount) {
 				return INTERPRET_RUNTIME_ERROR
 			}
@@ -246,7 +249,9 @@ func (vm *Vm) Run() InterpretResult {
 		default:
 			return INTERPRET_COMPILE_ERROR
 		}
-		fmt.Printf("instruction %s: \n", Maaa[instruction])
+		if vm.debug {
+			fmt.Printf("instruction %s: \n", Maaa[instruction])
+		}
 		if result != INTERPRET_OK {
 			return result
 		}
@@ -288,7 +293,7 @@ func (vm *Vm) ResetStack() {
 
 func (vm *Vm) Push(value Value) {
 	if value.isBool() {
-		fmt.Printf("AAAAAAAAAAAbb")
+		//fmt.Printf("AAAAAAAAAAAbb")
 
 	}
 	vm.Stack[vm.StackTop] = value
@@ -404,13 +409,12 @@ func (vm *Vm) runtimeError(format string, vals ...any) {
 	vm.ResetStack()
 }
 
-func (vm *Vm) DefineNative(name string, fn NativeFn) {
-	vm.Push(objVal(ObjString{
-		ttype:  OBJ_STRING,
-		chars:  []byte(name),
-		length: len(name),
-	}, vm.objects))
-	vm.Push(objVal(NewObjNative(fn, name), vm.objects))
+/*
+DefineNative defines a native function in the VM's global scope.
+*/
+func (vm *Vm) DefineNative(name string, fn NativeFn, arity int) {
+	vm.Push(objVal(NewObjString([]byte(name)), vm.objects))
+	vm.Push(objVal(NewObjNative(fn, name, arity), vm.objects))
 	t := toStringObj(vm.Peek(1))
 	vm.globals.Set(&t, vm.Peek(0))
 	vm.Pop()
@@ -419,6 +423,17 @@ func (vm *Vm) DefineNative(name string, fn NativeFn) {
 
 func clockNative(argCount byte, args ...Value) Value {
 	return numberVal(float64(time.Now().Unix()))
+}
+
+func addNative(argCount byte, args ...Value) Value {
+	sum := 0.0
+	for _, arg := range args {
+		if !arg.isNumber() {
+			return numberVal(0)
+		}
+		sum += arg.GetValue()
+	}
+	return numberVal(sum)
 }
 
 func (vm *Vm) Concatenate() {
@@ -461,6 +476,14 @@ func (vm *Vm) CallValue(callee Value, argCount byte) bool {
 		case callee.isObjType(OBJ_NATIVE):
 			native := toNativeObj(callee)
 			args := make([]Value, argCount)
+			if native.Arity != -1 && int(argCount) != native.Arity {
+				vm.runtimeError(
+					"Expected %d arguments but got %d.",
+					native.Arity,
+					argCount,
+				)
+				return false
+			}
 			for i := byte(0); i < argCount; i++ {
 				args[i] = vm.Stack[vm.StackTop-argCount+i]
 			}

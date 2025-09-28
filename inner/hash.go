@@ -86,6 +86,19 @@ func (t *Table) adjustCapacity(newCap uint32) {
 	t.capacity = newCap
 }
 
+func (t *Table) Debug() {
+	fmt.Printf("Table count=%d capacity=%d\n", t.count, t.capacity)
+	for i, entry := range t.entries {
+		if entry == nil {
+			fmt.Printf("[%d] <nil>\n", i)
+		} else if entry.key == nil {
+			fmt.Printf("[%d] <tombstone>\n", i)
+		} else {
+			fmt.Printf("[%d] key='%s' value=%#v\n", i, string(entry.key.chars), entry.value)
+		}
+	}
+}
+
 func findEntry(entries []*Entry, capacity uint32, key *ObjString) *Entry {
 	index := key.hash % capacity
 	var tombstone *Entry

@@ -74,12 +74,14 @@ type ObjNative struct {
 	Obj   *Obj
 	NFunk NativeFn
 	Name  string
+	Arity int
 }
 
-func NewObjNative(nfunk NativeFn, name string) *ObjNative {
+func NewObjNative(nfunk NativeFn, name string, arity int) *ObjNative {
 	return &ObjNative{
 		NFunk: nfunk,
 		Name:  name,
+		Arity: arity,
 	}
 }
 
