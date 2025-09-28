@@ -24,4 +24,36 @@ const (
 	OP_SET_GLOBAL    byte = iota
 	OP_GET_LOCAL     byte = iota
 	OP_SET_LOCAL     byte = iota
+	OP_JUMP_IF_FALSE byte = iota
+	OP_JUMP          byte = iota
+	OP_LOOP          byte = iota
+	OP_CALL          byte = iota
 )
+
+var Maaa = map[byte]string{
+	OP_NIL:           "OP_NIL",
+	OP_TRUE:          "OP_TRUE",
+	OP_FALSE:         "OP_FALSE",
+	OP_RETURN:        "OP_RETURN",
+	OP_CONSTANT:      "OP_CONSTANT",
+	OP_NEGATE:        "OP_NEGATE",
+	OP_ADD:           "OP_ADD",
+	OP_SUB:           "OP_SUB",
+	OP_MUL:           "OP_MUL",
+	OP_DIV:           "OP_DIV",
+	OP_NOT:           "OP_NOT",
+	OP_EQUAL:         "OP_EQUAL",
+	OP_GREATER:       "OP_GREATER",
+	OP_LESS:          "OP_LESS",
+	OP_PRINT:         "OP_PRINT",
+	OP_POP:           "OP_POP",
+	OP_DEFINE_GLOBAL: "OP_DEFINE_GLOBAL",
+	OP_GET_GLOBAL:    "OP_GET_GLOBAL",
+	OP_SET_GLOBAL:    "OP_SET_GLOBAL",
+	OP_GET_LOCAL:     "OP_GET_LOCAL",
+	OP_SET_LOCAL:     "OP_SET_LOCAL",
+	OP_JUMP_IF_FALSE: "OP_JUMP_IF_FALSE",
+	OP_JUMP:          "OP_JUMP",
+	OP_LOOP:          "OP_LOOP",
+	OP_CALL:          "OP_CALL",
+}

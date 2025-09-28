@@ -1,6 +1,8 @@
 package inner
 
-import "fmt"
+import (
+	"fmt"
+)
 
 type Chunk struct {
 	Code      []byte
@@ -82,10 +84,24 @@ func (c *Chunk) disassembleInstruction(offset int) int {
 		return byteInstruction("OP_GET_LOCAL", c, offset)
 	case OP_SET_LOCAL:
 		return byteInstruction("OP_SET_LOCAL", c, offset)
+	case OP_JUMP:
+		return jumpInstruction("OP_JUMP", 1, c, offset)
+	case OP_JUMP_IF_FALSE:
+		return jumpInstruction("OP_JUMP_IF_FALSE", 1, c, offset)
+	case OP_LOOP:
+		return jumpInstruction("OP_LOOP", -1, c, offset)
+	case OP_CALL:
+		return byteInstruction("OP_CALL", c, offset)
 	default:
 		fmt.Printf("Unknown opcode %d\n", instruction)
 		return offset + 1
 	}
+}
+
+func jumpInstruction(name string, sign int, chunk *Chunk, offset int) int {
+	jump := (uint16(chunk.Code[offset+1]) << 8) | uint16(chunk.Code[offset+2])
+	fmt.Printf("%-16s %4d -> %d\n", name, offset, offset+3+sign*int(jump))
+	return offset + 3
 }
 
 func (c *Chunk) AddConstant(v Value) byte {
@@ -142,5 +158,18 @@ func printObj(value Value) {
 			panic("AAAAAAAA")
 		}
 		break
+	case OBJ_FUNCTION:
+		switch t := value.GetObj().(type) {
+		case *ObjFunction:
+			if len(t.Name.chars) > 0 {
+				print("<func " + string(t.Name.chars) + "()>")
+			} else {
+				print("<script>")
+			}
+		default:
+			panic("AAAAAAAA")
+		}
+	case OBJ_NATIVE:
+		print("<native fn>")
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"time"
 )
 
 type InterpretResult uint8
@@ -17,53 +18,88 @@ const (
 type ValueType uint8
 
 const STACK_MAX = 256
+const FRAME_MAX = 64
+
+type CallFrame struct {
+	function *ObjFunction
+	ip       uint16
+	slots    uint8
+}
+
+func NewCallFrame() *CallFrame {
+	return &CallFrame{
+		function: nil,
+		ip:       0,
+		slots:    0,
+	}
+}
 
 type Vm struct {
-	Chunk    *Chunk
-	Ip       uint
-	Stack    [STACK_MAX]Value
-	StackTop uint8
-	debug    bool
-	objects  *ObjValue
-	globals  *Table
+	Stack           [STACK_MAX]Value
+	StackTop        uint8
+	debug           bool
+	objects         *ObjValue
+	globals         *Table
+	CallFrames      [FRAME_MAX]*CallFrame
+	FrameCount      uint8
+	currentCompiler *Compiler
 }
 
 func NewVm(chunk *Chunk, debug bool) *Vm {
-	return &Vm{
-		Chunk:    chunk,
-		Ip:       0,
-		Stack:    [256]Value{},
-		StackTop: 0,
-		debug:    debug,
-		globals:  NewTable(),
+	t := [FRAME_MAX]*CallFrame{}
+	for i := 0; i < FRAME_MAX; i++ {
+		t[i] = NewCallFrame()
 	}
+
+	vm := &Vm{
+		Stack:      [STACK_MAX]Value{},
+		StackTop:   0,
+		debug:      debug,
+		globals:    NewTable(),
+		CallFrames: t,
+		FrameCount: 0,
+	}
+
+	vm.DefineNative("clock", clockNative)
+
+	return vm
 }
 
 func (vm *Vm) Interpret(source string) InterpretResult {
-	c := NewCompiler(vm.debug, vm)
+	vm.currentCompiler = NewCompiler(vm.debug, vm, FUNK_TYPE_SCRIPT, nil, nil)
 
-	if !c.Compile(source) {
+	f := vm.currentCompiler.Compile(source)
+	if f == nil {
 		return INTERPRET_RUNTIME_ERROR
 	}
 
-	vm.Chunk = c.chunk
-	vm.Ip = 0
+	vm.Push(objVal(f, vm.objects))
+	frame := vm.CallFrames[vm.FrameCount]
+	if frame == nil {
+		vm.CallFrames[vm.FrameCount] = NewCallFrame()
+		frame = vm.CallFrames[vm.FrameCount]
+	}
+	vm.FrameCount++
+	frame.function = f
+	frame.ip = 0
+	frame.slots = vm.StackTop
+
 	result := vm.Run()
 
-	if vm.debug {
-		count := 0
-		if vm.objects != nil {
-			next := vm.objects
-			//println(fmt.Sprintf("%#v", next))
-			count = 1
-			for next.next != nil {
-				next = next.next
-				//println(fmt.Sprintf("%#v", next))
-				count++
-			}
-		}
-		fmt.Println(fmt.Sprintf("Number of objects: %d", count))
-	}
+	//if vm.debug {
+	//	count := 0
+	//	if vm.objects != nil {
+	//		next := vm.objects
+	//		//println(fmt.Sprintf("%#v", next))
+	//		count = 1
+	//		for next.next != nil {
+	//			next = next.next
+	//			//println(fmt.Sprintf("%#v", next))
+	//			count++
+	//		}
+	//	}
+	//	fmt.Println(fmt.Sprintf("Number of objects: %d", count))
+	//}
 
 	vm.free()
 
@@ -71,12 +107,15 @@ func (vm *Vm) Interpret(source string) InterpretResult {
 }
 
 func (vm *Vm) readByte() byte {
-	vm.Ip++
-	return vm.Chunk.Code[vm.Ip-1]
+	frame := vm.CallFrames[vm.FrameCount-1]
+	frame.ip++
+
+	return frame.function.Chunk.Code[frame.ip-1]
 }
 
 func (vm *Vm) readConstant() Value {
-	return vm.Chunk.constants.Values[vm.readByte()]
+	frame := vm.CallFrames[vm.FrameCount-1]
+	return frame.function.Chunk.constants.Values[vm.readByte()]
 }
 
 func (vm *Vm) readString() ObjString {
@@ -100,9 +139,11 @@ func (vm *Vm) free() {
 
 func (vm *Vm) Run() InterpretResult {
 	var result InterpretResult
+	frame := vm.CallFrames[vm.FrameCount-1]
 	for {
 		result = INTERPRET_OK
-		switch instruction := vm.readByte(); instruction {
+		instruction := vm.readByte()
+		switch instruction {
 		case OP_NEGATE:
 			if !vm.Peek(0).isNumber() {
 				vm.runtimeError("Operand must be a number.")
@@ -130,10 +171,12 @@ func (vm *Vm) Run() InterpretResult {
 			vm.Pop()
 		case OP_GET_LOCAL:
 			slot := vm.readByte()
-			vm.Push(vm.Stack[slot])
+			//vm.Push(vm.Stack[stack.Slots])
+			vm.Push(vm.Stack[frame.slots+slot])
 		case OP_SET_LOCAL:
 			slot := vm.readByte()
-			vm.Stack[slot] = vm.Peek(0)
+			//frame.slots[slot] = vm.Peek(0)
+			vm.Stack[frame.slots+slot] = vm.Peek(0)
 		case OP_NOT:
 			vm.Push(boolVal(vm.isFalsy(vm.Pop())))
 		case OP_EQUAL:
@@ -143,13 +186,15 @@ func (vm *Vm) Run() InterpretResult {
 		case OP_GREATER:
 			result = vm.binaryOpBool(boolVal, greater)
 		case OP_LESS:
-			result = vm.binaryOpBool(boolVal, greater)
+			result = vm.binaryOpBool(boolVal, less)
 		case OP_PRINT:
 			t := vm.Pop()
 			if t.isNumber() {
 				fmt.Printf("#> %v\n", t.GetValue())
-			} else {
+			} else if t.isObj() {
 				fmt.Printf("#> %s\n", toStringObj(t).chars)
+			} else {
+				fmt.Printf("#> %v <- this is unexpected btw \n", t)
 			}
 		case OP_DEFINE_GLOBAL:
 			name := vm.readString()
@@ -170,10 +215,38 @@ func (vm *Vm) Run() InterpretResult {
 				vm.runtimeError("Undefined variable '%s'.", name.chars)
 				return INTERPRET_RUNTIME_ERROR
 			}
+		case OP_JUMP_IF_FALSE:
+			offset := vm.readShort()
+			if vm.isFalsy(vm.Peek(0)) {
+				frame.ip += offset
+			}
+		case OP_JUMP:
+			offset := vm.readShort()
+			frame.ip += offset
+		case OP_LOOP:
+			offset := vm.readShort()
+			frame.ip -= offset
+		case OP_CALL:
+			argCount := vm.readByte()
+			fmt.Printf("Arg call count %d \n", argCount)
+			if !vm.CallValue(vm.Peek(argCount), argCount) {
+				return INTERPRET_RUNTIME_ERROR
+			}
+			frame = vm.CallFrames[vm.FrameCount-1]
+		case OP_RETURN:
+			res := vm.Pop()
+			vm.FrameCount--
+			if vm.FrameCount == 0 {
+				vm.Pop()
+				return INTERPRET_OK
+			}
+			vm.StackTop = frame.slots
+			vm.Push(res)
+			frame = vm.CallFrames[vm.FrameCount-1]
 		default:
 			return INTERPRET_COMPILE_ERROR
 		}
-
+		fmt.Printf("instruction %s: \n", Maaa[instruction])
 		if result != INTERPRET_OK {
 			return result
 		}
@@ -210,9 +283,14 @@ func valuesEqual(a Value, b Value) bool {
 
 func (vm *Vm) ResetStack() {
 	vm.StackTop = 0
+	vm.FrameCount = 0
 }
 
 func (vm *Vm) Push(value Value) {
+	if value.isBool() {
+		fmt.Printf("AAAAAAAAAAAbb")
+
+	}
 	vm.Stack[vm.StackTop] = value
 	vm.StackTop++
 	if vm.debug {
@@ -242,10 +320,16 @@ func (vm *Vm) DebugStack() {
 		} else if val.ttype == VAL_OBJ {
 			t := val.GetObj()
 			ttypeName = ttypeName + " " + t.GetTypeName()
+
 			switch k := t.(type) {
 			case ObjString:
 				value = string(k.chars)
+			case *ObjFunction:
+				value = string(k.Name.chars)
+			case *ObjNative:
+				value = k.Name
 			default:
+				fmt.Printf("%#v\n", k)
 				panic("AAAA")
 			}
 			//value = val.GetObj().getTypeName()
@@ -268,7 +352,7 @@ func (vm *Vm) binaryOp(valueType func(v float64) Value, op opFunc) InterpretResu
 	} else if vm.Peek(0).isNumber() || vm.Peek(1).isNumber() {
 		vm.Push(valueType(op(vm.Pop().GetValue(), vm.Pop().GetValue())))
 	} else {
-		vm.runtimeError("Operands must be numbers.")
+		vm.runtimeError("Operands must be numbers (vrament).")
 		return INTERPRET_RUNTIME_ERROR
 	}
 
@@ -299,12 +383,42 @@ func (vm *Vm) isFalsy(val Value) bool {
 
 func (vm *Vm) runtimeError(format string, vals ...any) {
 	fmt.Fprintln(os.Stderr, fmt.Sprintf(format, vals...))
-	//
-	// instruction = vm.Ip - vm.Chunk.Code[0] - 1;
-	instruction := vm.Ip - 1
-	line := vm.Chunk.lines[instruction]
-	fmt.Fprintln(os.Stderr, fmt.Sprintf("[line %d] in script\n", line))
+
+	//frame := vm.CallFrames[vm.FrameCount-1]
+	//instruction := frame.ip - uint16(frame.function.Chunk.Code[0]) - 1
+	//line := frame.function.Chunk.lines[instruction]
+
+	fmt.Fprintln(os.Stderr, fmt.Sprintf("[line TODO%d] in script\n", -12))
+
+	for i := int(vm.FrameCount) - 1; i >= 0; i-- {
+		frame := vm.CallFrames[i]
+		f := frame.function
+		//instruction := frame.ip - uint16(frame.function.Chunk.Code[0]) - 1
+		//fmt.Println(fmt.Sprintf("[line %d] in ", f.Chunk.lines[instruction]))
+		if len(f.Name.chars) == 0 {
+			fmt.Println("script")
+		} else {
+			fmt.Printf("%s()\n", string(f.Name.chars))
+		}
+	}
 	vm.ResetStack()
+}
+
+func (vm *Vm) DefineNative(name string, fn NativeFn) {
+	vm.Push(objVal(ObjString{
+		ttype:  OBJ_STRING,
+		chars:  []byte(name),
+		length: len(name),
+	}, vm.objects))
+	vm.Push(objVal(NewObjNative(fn, name), vm.objects))
+	t := toStringObj(vm.Peek(1))
+	vm.globals.Set(&t, vm.Peek(0))
+	vm.Pop()
+	vm.Pop()
+}
+
+func clockNative(argCount byte, args ...Value) Value {
+	return numberVal(float64(time.Now().Unix()))
 }
 
 func (vm *Vm) Concatenate() {
@@ -328,6 +442,64 @@ func (vm *Vm) Concatenate() {
 	}
 
 	vm.Push(newStringVal)
+}
+
+func (vm *Vm) readShort() uint16 {
+	frame := vm.CallFrames[vm.FrameCount-1]
+	frame.ip += 2
+	tt := (uint16(frame.function.Chunk.Code[frame.ip-2]) << 8) | uint16(frame.function.Chunk.Code[frame.ip-1])
+
+	return tt
+}
+
+func (vm *Vm) CallValue(callee Value, argCount byte) bool {
+	if callee.isObj() {
+		switch true {
+		case callee.isObjType(OBJ_FUNCTION):
+			t := toFuncObj(callee)
+			return vm.Call(&t, argCount)
+		case callee.isObjType(OBJ_NATIVE):
+			native := toNativeObj(callee)
+			args := make([]Value, argCount)
+			for i := byte(0); i < argCount; i++ {
+				args[i] = vm.Stack[vm.StackTop-argCount+i]
+			}
+			result := native.NFunk(argCount, args...)
+			vm.StackTop -= argCount + 1
+			vm.Push(result)
+
+			return true
+		default:
+			break // Non-callable object type.
+		}
+
+	}
+	vm.runtimeError("Can only call functions and classes.")
+	return false
+}
+
+func (vm *Vm) Call(function *ObjFunction, argCount byte) bool {
+	if int(argCount) != function.Arity {
+		vm.runtimeError(
+			"Expected %d arguments but got %d.",
+			function.Arity,
+			argCount,
+		)
+		return false
+	}
+
+	frame := vm.CallFrames[vm.FrameCount]
+	vm.FrameCount += 1
+	if vm.FrameCount == FRAME_MAX {
+		vm.runtimeError("Stack overflow.")
+		return false
+	}
+	frame.function = function
+	//frame.ip = uint16(int(vm.StackTop) - int(argCount) - 1)
+	frame.ip = 0
+	frame.slots = vm.StackTop - argCount - 1
+	//todo ?
+	return true
 }
 
 type opFunc func(b, a float64) float64

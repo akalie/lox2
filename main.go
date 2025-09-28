@@ -26,7 +26,7 @@ func main() {
 	}
 
 	vm := inner.NewVm(inner.NewChunk(), debug)
-	//newArgs = append(newArgs, "/home/akalie/fun/go/lox2/local_global.lx")
+	newArgs = append(newArgs, "/home/akalie/fun/go/lox2/clock.lx")
 	switch len(newArgs) {
 	case 0:
 		if debug {

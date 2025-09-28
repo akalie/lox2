@@ -3,6 +3,7 @@ package inner
 type TokenType int
 
 const (
+	TOKEN_NOTHING     TokenType = iota // then go creates empty token, it looks like this
 	TOKEN_LEFT_PAREN  TokenType = iota
 	TOKEN_RIGHT_PAREN TokenType = iota
 
@@ -69,10 +70,11 @@ type Scanner struct {
 }
 
 type Token struct {
-	Type   TokenType
-	Start  int
-	Line   int
-	Source []byte
+	Type        TokenType
+	Start       int
+	Line        int
+	Source      []byte
+	CurrentChar int
 }
 
 func (t *Token) GetSource() []byte {
@@ -155,10 +157,11 @@ func (s *Scanner) scanToken() Token {
 
 func (s *Scanner) errorToken(msg string) Token {
 	return Token{
-		Type:   TOKEN_ERROR,
-		Start:  0,
-		Line:   s.Line,
-		Source: []byte(msg),
+		Type:        TOKEN_ERROR,
+		Start:       0,
+		Line:        s.Line,
+		Source:      []byte(msg),
+		CurrentChar: s.Current,
 	}
 }
 
@@ -168,10 +171,11 @@ func (s *Scanner) atEnd() bool {
 
 func (s *Scanner) makeToken(tokenType TokenType) Token {
 	return Token{
-		Type:   tokenType,
-		Start:  0,
-		Line:   s.Line,
-		Source: s.Source[s.Start:s.Current],
+		Type:        tokenType,
+		Start:       0,
+		Line:        s.Line,
+		Source:      s.Source[s.Start:s.Current],
+		CurrentChar: s.Current,
 	}
 }
 

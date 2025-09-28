@@ -3,11 +3,15 @@ package inner
 type ObjType uint8
 
 const (
-	OBJ_STRING ObjType = iota
+	OBJ_STRING   ObjType = iota
+	OBJ_FUNCTION ObjType = iota
+	OBJ_NATIVE   ObjType = iota
 )
 
 var objTypeName = map[ObjType]string{
-	OBJ_STRING: "string",
+	OBJ_STRING:   "string",
+	OBJ_FUNCTION: "function",
+	OBJ_NATIVE:   "native",
 }
 
 type Obj interface {
@@ -47,4 +51,51 @@ func hashString(key []byte, length int) uint32 {
 		hash *= 16777619
 	}
 	return uint32(hash)
+}
+
+type ObjFunction struct {
+	Obj   *Obj
+	Arity int
+	Chunk *Chunk
+	Name  ObjString
+}
+
+func (of ObjFunction) GetType() ObjType {
+	return OBJ_FUNCTION
+}
+
+func (of ObjFunction) GetTypeName() string {
+	return objTypeName[of.GetType()]
+}
+
+type NativeFn func(argCount byte, args ...Value) Value
+
+type ObjNative struct {
+	Obj   *Obj
+	NFunk NativeFn
+	Name  string
+}
+
+func NewObjNative(nfunk NativeFn, name string) *ObjNative {
+	return &ObjNative{
+		NFunk: nfunk,
+		Name:  name,
+	}
+}
+
+func (on ObjNative) GetType() ObjType {
+	return OBJ_NATIVE
+}
+
+func (on ObjNative) GetTypeName() string {
+	return objTypeName[on.GetType()]
+}
+
+func NewObjFunction(arity int, name ObjString) *ObjFunction {
+	chunk := NewChunk()
+	return &ObjFunction{
+		Arity: arity,
+		Chunk: chunk,
+		Name:  name,
+	}
 }

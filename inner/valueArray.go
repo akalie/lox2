@@ -98,6 +98,34 @@ func toStringObj(value Value) ObjString {
 	}
 }
 
+func toFuncObj(value Value) ObjFunction {
+	if !value.isObjType(OBJ_FUNCTION) {
+		panic("We should never be here, toFunction")
+	}
+	switch t := value.GetObj().(type) {
+	case ObjFunction:
+		return t
+	case *ObjFunction:
+		return *t
+	default:
+		panic("We should never be here, toFuncObj, not function")
+	}
+}
+
+func toNativeObj(value Value) ObjNative {
+	if !value.isObjType(OBJ_NATIVE) {
+		panic("We should never be here, toFunction")
+	}
+	switch t := value.GetObj().(type) {
+	case ObjNative:
+		return t
+	case *ObjNative:
+		return *t
+	default:
+		panic("We should never be here, toFuncObj, not function")
+	}
+}
+
 func (v Value) isBool() bool {
 	return v.ttype == VAL_BOOL
 }

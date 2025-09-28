@@ -22,6 +22,13 @@ const (
 	PREC_PRIMARY    Precedence = iota
 )
 
+type FuncType int
+
+const (
+	FUNK_TYPE_FUNCTION FuncType = iota
+	FUNK_TYPE_SCRIPT   FuncType = iota
+)
+
 type ParseFn func(c *Compiler, canAssign bool)
 
 type ParseRule struct {
@@ -34,7 +41,7 @@ var rules []ParseRule
 
 func init() {
 	rules = []ParseRule{
-		TOKEN_LEFT_PAREN:    {grouping, nil, PREC_NONE},
+		TOKEN_LEFT_PAREN:    {grouping, call, PREC_CALL},
 		TOKEN_RIGHT_PAREN:   {nil, nil, PREC_NONE},
 		TOKEN_LEFT_BRACE:    {nil, nil, PREC_NONE},
 		TOKEN_RIGHT_BRACE:   {nil, nil, PREC_NONE},
@@ -56,7 +63,7 @@ func init() {
 		TOKEN_IDENTIFIER:    {variable, nil, PREC_NONE},
 		TOKEN_STRING:        {str, nil, PREC_NONE},
 		TOKEN_NUMBER:        {number, nil, PREC_NONE},
-		TOKEN_AND:           {nil, nil, PREC_NONE},
+		TOKEN_AND:           {nil, and, PREC_AND},
 		TOKEN_CLASS:         {nil, nil, PREC_NONE},
 		TOKEN_ELSE:          {nil, nil, PREC_NONE},
 		TOKEN_FALSE:         {literal, nil, PREC_NONE},
@@ -64,7 +71,7 @@ func init() {
 		TOKEN_FUN:           {nil, nil, PREC_NONE},
 		TOKEN_IF:            {nil, nil, PREC_NONE},
 		TOKEN_NIL:           {literal, nil, PREC_NONE},
-		TOKEN_OR:            {nil, nil, PREC_NONE},
+		TOKEN_OR:            {nil, or, PREC_OR},
 		TOKEN_PRINT:         {nil, nil, PREC_NONE},
 		TOKEN_RETURN:        {nil, nil, PREC_NONE},
 		TOKEN_SUPER:         {nil, nil, PREC_NONE},
@@ -75,6 +82,26 @@ func init() {
 		TOKEN_ERROR:         {nil, nil, PREC_NONE},
 		TOKEN_EOF:           {nil, nil, PREC_NONE},
 	}
+}
+
+func and(c *Compiler, assign bool) {
+	endJump := c.emitJump(OP_JUMP_IF_FALSE)
+
+	c.EmitByte(OP_POP)
+	c.parsePrecedence(PREC_AND)
+
+	c.PatchJump(endJump)
+}
+
+func or(c *Compiler, assign bool) {
+	elseJump := c.emitJump(OP_JUMP_IF_FALSE)
+	endJump := c.emitJump(OP_JUMP)
+
+	c.PatchJump(elseJump)
+	c.EmitByte(OP_POP)
+
+	c.parsePrecedence(PREC_OR)
+	c.PatchJump(endJump)
 }
 
 func unary(c *Compiler, canAssign bool) {
@@ -141,6 +168,7 @@ func grouping(c *Compiler, canAssign bool) {
 	c.expression()
 	c.consume(TOKEN_RIGHT_PAREN, "Expect ')' after expression.")
 }
+
 func number(c *Compiler, canAssign bool) {
 	t, _ := strconv.ParseFloat(string(c.parser.previous.GetSource()), 64)
 	c.emitConstant(numberVal(t))
@@ -163,6 +191,34 @@ func variable(c *Compiler, canAssign bool) {
 	c.namedVariable(c.parser.previous, canAssign)
 }
 
+func call(c *Compiler, canAssign bool) {
+	argCount := argumentList(c)
+	if argCount > 255 {
+		c.Error("Can't have more than 255 arguments.")
+	}
+	c.EmitBytes(OP_CALL, byte(argCount))
+}
+
+func argumentList(c *Compiler) int {
+	argCount := 0
+	if !c.Check(TOKEN_RIGHT_PAREN) {
+		for {
+			c.expression()
+			argCount = argCount + 1
+			if !c.Match(TOKEN_COMMA) {
+				break
+			}
+		}
+	}
+	if !c.Check(TOKEN_RIGHT_PAREN) {
+		c.errorAtCurrent("Expect `)` after expression")
+
+	}
+	c.consume(TOKEN_RIGHT_PAREN, "Expect ')' after arguments.")
+
+	return argCount
+}
+
 type Local struct {
 	name  Token
 	depth int
@@ -175,6 +231,8 @@ func NewLocal() *Local {
 }
 
 type Compiler struct {
+	function   *ObjFunction
+	funcType   FuncType
 	parser     *Parser
 	chunk      *Chunk
 	scanner    *Scanner
@@ -183,6 +241,7 @@ type Compiler struct {
 	locals     [256]*Local
 	localCount int
 	scopeDepth int
+	Enclosing  *Compiler
 }
 
 type Parser struct {
@@ -192,34 +251,83 @@ type Parser struct {
 	panicMode bool
 }
 
-func NewCompiler(debug bool, vm *Vm) *Compiler {
+func NewCompiler(debug bool, vm *Vm, funcType FuncType, scanner *Scanner, c *Compiler) *Compiler {
 	locals := [256]*Local{}
 	for i := 0; i < len(locals); i++ {
 		locals[i] = NewLocal()
 	}
+	local := locals[0]
+	local.depth = 0
+	local.name.Start = 0
+	local.name.Source = []byte("")
+	parser := &Parser{}
+	if c != nil {
+		parser = c.parser
+	}
+	name := []byte{}
+	if funcType != FUNK_TYPE_SCRIPT {
+		name = c.parser.previous.Source
+	}
 	return &Compiler{
-		parser: &Parser{},
-		chunk:  NewChunk(),
-		debug:  debug,
-		vm:     vm,
-		locals: locals,
+		parser:     parser,
+		chunk:      NewChunk(),
+		debug:      debug,
+		vm:         vm,
+		locals:     locals,
+		funcType:   funcType,
+		function:   NewObjFunction(0, NewObjString(name)),
+		localCount: 1,
+		scanner:    scanner,
+		Enclosing:  c,
 	}
 }
 
-func (c *Compiler) Compile(source string) bool {
+//func AddLocalCompiler(c *Compiler, funcType FuncType, vm *Vm) *Compiler {
+//	c.Enclosing = vm.currentCompiler
+//	c.function = nil
+//	c.funcType = funcType
+//	c.localCount = 0
+//	c.scopeDepth = 0
+//
+//	c.function = NewObjFunction(0, NewObjString([]byte("")))
+//	vm.currentCompiler = c
+
+//
+//	local := vm.currentCompiler.locals[vm.currentCompiler.localCount]
+//	vm.currentCompiler.localCount++
+//	local.depth = 0
+//	//local.isCaptured = false
+//	local.name.Start = 0
+//	local.name.Source = []byte("")
+//	if funcType != FUNK_TYPE_FUNCTION {
+//		//	local.name.Source = "this"
+//		//	local.name.length = 4
+//		//} else {
+//
+//	}
+//	return c
+//}
+
+func (c *Compiler) Compile(source string) *ObjFunction {
 	c.scanner = NewScanner(source)
 	c.Advance()
 
 	for !c.Match(TOKEN_EOF) {
 		c.declaration()
 	}
-	c.endCompiler()
+	f := c.endCompiler()
 
-	return !c.parser.hadError
+	if c.parser.hadError {
+		return nil
+	} else {
+		return f
+	}
 }
 
 func (c *Compiler) declaration() {
-	if c.Match(TOKEN_VAR) {
+	if c.Match(TOKEN_FUN) {
+		c.FunDeclaration()
+	} else if c.Match(TOKEN_VAR) {
 		c.VarDeclaration()
 	} else {
 		c.Statement()
@@ -232,6 +340,14 @@ func (c *Compiler) declaration() {
 func (c *Compiler) Statement() {
 	if c.Match(TOKEN_PRINT) {
 		c.PrintStatement()
+	} else if c.Match(TOKEN_IF) {
+		c.IfStatement()
+	} else if c.Match(TOKEN_WHILE) {
+		c.whileStatement()
+	} else if c.Match(TOKEN_RETURN) {
+		c.returnStatement()
+	} else if c.Match(TOKEN_FOR) {
+		c.forStatement()
 	} else if c.Match(TOKEN_LEFT_BRACE) {
 		c.BeginScope()
 		c.Block()
@@ -250,11 +366,14 @@ func (c *Compiler) Advance() {
 			break
 		}
 
-		c.errorAtCurrent("")
+		c.errorAtCurrent("Error!")
 	}
 }
 
 func (c *Compiler) EmitByte(byte2 byte) {
+	if byte2 == OP_NIL {
+		fmt.Printf("AAAAAAAAa")
+	}
 	c.currentChunk().Write(byte2, 1)
 }
 
@@ -264,7 +383,7 @@ func (c *Compiler) EmitBytes(byte2 byte, byte3 byte) {
 }
 
 func (c *Compiler) currentChunk() *Chunk {
-	return c.chunk
+	return c.function.Chunk
 }
 
 func (c *Compiler) errorAtCurrent(message string) {
@@ -276,7 +395,6 @@ func (c *Compiler) Error(message string) {
 }
 
 func (c *Compiler) ErrorAt(token Token, message string) {
-
 	if c.parser.panicMode {
 		return
 	}
@@ -290,7 +408,7 @@ func (c *Compiler) ErrorAt(token Token, message string) {
 		// Nothing.
 	} else {
 		fmt.Printf(" at '%s'", token.Source)
-		fmt.Printf(" at line %d symbol %d", token.Line, token.Start)
+		fmt.Printf(" at line %d symbol %d", token.Line, token.CurrentChar)
 	}
 
 	fmt.Printf(": %s\n", message)
@@ -306,16 +424,24 @@ func (c *Compiler) consume(ttype TokenType, message string) {
 	c.errorAtCurrent(message)
 }
 
-func (c *Compiler) endCompiler() {
+func (c *Compiler) endCompiler() *ObjFunction {
 	c.emitReturn()
 	if !c.parser.hadError {
 		if c.debug {
-			c.currentChunk().Disassemble("code")
+			if len(c.function.Name.chars) == 0 {
+				c.currentChunk().Disassemble("<script>")
+			} else {
+				c.currentChunk().Disassemble(string(c.function.Name.chars))
+			}
 		}
 	}
+	c.vm.currentCompiler = c.Enclosing
+
+	return c.function
 }
 
 func (c *Compiler) emitReturn() {
+	c.EmitByte(OP_NIL)
 	c.EmitByte(OP_RETURN)
 }
 
@@ -378,13 +504,13 @@ func (c *Compiler) Check(ttype TokenType) bool {
 
 func (c *Compiler) PrintStatement() {
 	c.expression()
-	c.consume(TOKEN_SEMICOLON, "Expect '' after value.")
+	c.consume(TOKEN_SEMICOLON, "Expect ';' after value.")
 	c.EmitByte(OP_PRINT)
 }
 
 func (c *Compiler) ExpressionStatement() {
 	c.expression()
-	c.consume(TOKEN_SEMICOLON, "Expect '' after expression.")
+	c.consume(TOKEN_SEMICOLON, "Expect ';' after expression.")
 	c.EmitByte(OP_POP)
 }
 
@@ -414,7 +540,7 @@ func (c *Compiler) VarDeclaration() {
 	} else {
 		c.EmitByte(OP_NIL)
 	}
-	c.consume(TOKEN_SEMICOLON, "Expect '' after variable declaration.")
+	c.consume(TOKEN_SEMICOLON, "Expect ';' after variable declaration.")
 
 	c.DefineVariable(global)
 }
@@ -540,5 +666,162 @@ func (c *Compiler) resolveLocal(name Token) int {
 }
 
 func (c *Compiler) markInitialized() {
+	if c.scopeDepth == 0 {
+		return
+	}
 	c.locals[c.localCount-1].depth = c.scopeDepth
+}
+
+func (c *Compiler) IfStatement() {
+	c.consume(TOKEN_LEFT_PAREN, "Expect '(' after 'if'.")
+	c.expression()
+	c.consume(TOKEN_RIGHT_PAREN, "Expect ')' after condition.")
+
+	thenJump := c.emitJump(OP_JUMP_IF_FALSE)
+	c.EmitByte(OP_POP)
+	c.Statement()
+	elseJump := c.emitJump(OP_JUMP)
+
+	c.PatchJump(thenJump)
+	if c.Match(TOKEN_ELSE) {
+		c.Statement()
+	}
+	c.PatchJump(elseJump)
+}
+
+func (c *Compiler) emitJump(instruction byte) int {
+	c.EmitByte(instruction)
+	c.EmitByte(0xff)
+	c.EmitByte(0xff)
+	return len(c.currentChunk().Code) - 2
+}
+
+func (c *Compiler) PatchJump(offset int) {
+	jump := len(c.currentChunk().Code) - offset - 2
+
+	if jump > 255 {
+		c.Error("Too much code to jump over.")
+	}
+
+	c.currentChunk().Code[offset] = byte((jump >> 8) & 0xff)
+	c.currentChunk().Code[offset+1] = byte(jump & 0xff)
+}
+
+func (c *Compiler) whileStatement() {
+	loopStart := len(c.currentChunk().Code)
+	c.consume(TOKEN_LEFT_PAREN, "Expect '(' after 'while'.")
+	c.expression()
+	c.consume(TOKEN_RIGHT_PAREN, "Expect ')' after condition.")
+
+	exitJump := c.emitJump(OP_JUMP_IF_FALSE)
+	c.EmitByte(OP_POP)
+	c.Statement()
+	c.EmitLoop(loopStart)
+
+	c.PatchJump(exitJump)
+	c.EmitByte(OP_POP)
+}
+
+func (c *Compiler) EmitLoop(loopStart int) {
+	c.EmitByte(OP_LOOP)
+
+	offset := len(c.currentChunk().Code) - loopStart + 2
+	if offset > 65535 {
+		c.Error("Loop body too large.")
+	}
+
+	c.EmitByte(byte((offset >> 8) & 0xff))
+	c.EmitByte(byte(offset & 0xff))
+}
+
+func (c *Compiler) forStatement() {
+	c.BeginScope()
+	c.consume(TOKEN_LEFT_PAREN, "Expect '(' after 'for'.")
+	if c.Match(TOKEN_SEMICOLON) {
+		// No initializer.
+	} else if c.Match(TOKEN_VAR) {
+		c.VarDeclaration()
+	} else {
+		c.ExpressionStatement()
+	}
+
+	loopStart := len(c.currentChunk().Code)
+	//c.consume(TOKEN_SEMICOLON, "Expect ';'.")
+
+	exitJump := -1
+	if !c.Match(TOKEN_SEMICOLON) {
+		c.expression()
+		c.consume(TOKEN_SEMICOLON, "Expect ';' after loop condition.")
+
+		// Jump out of the loop if the condition is false.
+		exitJump = c.emitJump(OP_JUMP_IF_FALSE)
+		c.EmitByte(OP_POP) // Condition.
+	}
+
+	//c.consume(TOKEN_RIGHT_PAREN, "Expect ')' after for clauses.")
+	if !c.Match(TOKEN_RIGHT_PAREN) {
+		bodyJump := c.emitJump(OP_JUMP)
+		incrementStart := len(c.currentChunk().Code)
+		c.expression()
+		c.EmitByte(OP_POP)
+		c.consume(TOKEN_RIGHT_PAREN, "Expect ')' after for clauses.")
+
+		c.EmitLoop(loopStart)
+		loopStart = incrementStart
+		c.PatchJump(bodyJump)
+	}
+	c.Statement()
+	c.EmitLoop(loopStart)
+	if exitJump != -1 {
+		c.PatchJump(exitJump)
+		c.EmitByte(OP_POP) // Condition.
+	}
+	c.EndScope()
+}
+
+func (c *Compiler) FunDeclaration() {
+	funName := c.parseVariable("Expect function name")
+	c.markInitialized()
+	c.fun(FUNK_TYPE_FUNCTION)
+	c.DefineVariable(funName)
+}
+
+func (c *Compiler) fun(ttype FuncType) {
+	cmp := NewCompiler(c.debug, c.vm, ttype, c.scanner, c)
+	cmp.BeginScope()
+
+	cmp.consume(TOKEN_LEFT_PAREN, "Expect '(' after function name.")
+	if !cmp.Check(TOKEN_RIGHT_PAREN) {
+		for {
+			cmp.function.Arity++
+			if cmp.function.Arity > 255 {
+				c.errorAtCurrent("Can't have more than 255 parameters.")
+			}
+			constant := cmp.parseVariable("Expect parameter name.")
+			cmp.DefineVariable(constant)
+			if !cmp.Match(TOKEN_COMMA) {
+				break
+			}
+		}
+	}
+	cmp.consume(TOKEN_RIGHT_PAREN, "Expect ')' after parameters.")
+	cmp.consume(TOKEN_LEFT_BRACE, "Expect '{' before function body.")
+	cmp.Block()
+
+	function := cmp.endCompiler()
+
+	c.EmitBytes(OP_CONSTANT, c.makeConstant(objVal(function, c.vm.objects)))
+}
+
+func (c *Compiler) returnStatement() {
+	if c.funcType == FUNK_TYPE_SCRIPT {
+		c.Error("Can't return from top-level code.")
+	}
+	if c.Match(TOKEN_SEMICOLON) {
+		c.emitReturn()
+		return
+	}
+	c.expression()
+	c.consume(TOKEN_SEMICOLON, "Expect ';' after return value.")
+	c.EmitByte(OP_RETURN)
 }
